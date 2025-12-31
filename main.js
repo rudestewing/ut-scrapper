@@ -280,10 +280,10 @@ async function main() {
     const outputFolder = ensureOutputFolder(bookID);
 
     console.log('\n=== Step 1: Scraping chapters and saving as PDF ===');
-    const totalChapters = end - start;
+    const totalChapters = end - start + 1;
     const pdfFiles = [];
 
-    for (let chapter = start; chapter < end; chapter++) {
+    for (let chapter = start; chapter <= end; chapter++) {
       const isFirstChapter = chapter === start;
       const pdfPath = await processChapter(
         browser,
@@ -334,19 +334,19 @@ async function processChapter(
   totalChapters,
   isFirstChapter
 ) {
-  console.log(`\nProcessing Chapter ${chapter + 1}/${totalChapters} (index: ${chapter})...`);
+  console.log(`\nProcessing Chapter ${chapter} (${chapter - start + 1} of ${totalChapters})...`);
 
   // Navigate to chapter with longer timeout for first chapter
   const timeout = isFirstChapter ? CONFIG.TIMEOUT.URL_MATCH_FIRST : CONFIG.TIMEOUT.URL_MATCH;
   await scrapeChapter(page, bookID, chapter, timeout);
 
   // Extract content and styles
-  console.log(`Extracting content and styles for chapter ${chapter + 1}...`);
+  console.log(`Extracting content and styles for chapter ${chapter}...`);
   const { content, styles } = await extractPageContent(page);
 
   // Create and save HTML template
   const htmlTemplate = createHtmlTemplate(content, styles);
-  const htmlFilePath = path.join(outputFolder, `chapter_${chapter + 1}.html`);
+  const htmlFilePath = path.join(outputFolder, `chapter_${chapter}.html`);
   fs.writeFileSync(htmlFilePath, htmlTemplate, 'utf-8');
   console.log(`✓ HTML saved: ${htmlFilePath}`);
 
@@ -369,9 +369,9 @@ async function generatePdfFromHtml(browser, htmlTemplate, outputFolder, chapter)
   const pdfPage = await browser.newPage();
   await pdfPage.setContent(htmlTemplate, { waitUntil: 'networkidle0' });
 
-  console.log(`Saving chapter ${chapter + 1} as PDF...`);
-  const tempPdfPath = path.join(outputFolder, `chapter_${chapter + 1}_temp.pdf`);
-  const finalPdfPath = path.join(outputFolder, `chapter_${chapter + 1}.pdf`);
+  console.log(`Saving chapter ${chapter} as PDF...`);
+  const tempPdfPath = path.join(outputFolder, `chapter_${chapter}_temp.pdf`);
+  const finalPdfPath = path.join(outputFolder, `chapter_${chapter}.pdf`);
 
   await pdfPage.pdf({
     path: tempPdfPath,
