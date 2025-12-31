@@ -2,6 +2,9 @@ import puppeteer from 'puppeteer';
 import fs from 'fs';
 import path from 'path';
 import { PDFDocument } from 'pdf-lib';
+import dotenv from 'dotenv';
+
+dotenv.config();
 
 // sample url
 // https://univterbuka.kotobee.com/#/book/88480/reader/chapter/0
@@ -61,7 +64,7 @@ async function scrapeChapter(page, bookID, chapterNumber, timeout = 0) {
   try {
     await page.goto(url, {
       waitUntil: 'networkidle0',
-      timeout: timeout > 0 ? timeout : 60000, // Increased to 60 seconds
+      timeout: 60000,
     });
   } catch (error) {
     // If navigation times out but page is loading, continue
@@ -79,7 +82,9 @@ async function scrapeChapter(page, bookID, chapterNumber, timeout = 0) {
 
   // Wait for content to load
   console.log(`Waiting for #epubContent to appear...`);
-  await page.waitForSelector('#epubContent', { timeout: 30000 });
+  await page.waitForSelector('#epubContent', {
+    timeout: 30000,
+  });
   // Give it extra time to fully render
   await new Promise((resolve) => setTimeout(resolve, 2000));
 
@@ -89,17 +94,17 @@ async function scrapeChapter(page, bookID, chapterNumber, timeout = 0) {
 async function main() {
   try {
     const browser = await puppeteer.launch({
-      headless: false,
+      headless: process.env.HEADLESS === 'true',
       args: [
         '--no-sandbox',
         '--disable-setuid-sandbox',
-        '--user-data-dir=C:\\Users\\rudi.setiawan\\AppData\\Local\\Google\\Chrome\\User Data',
+        `--user-data-dir=${process.env.USER_DATA_DIR}`,
         '--profile-directory=Default',
       ],
     });
 
     const page = await browser.newPage();
-    page.setDefaultNavigationTimeout(60000); // Increased to 60 seconds
+    page.setDefaultNavigationTimeout(60000);
 
     // Create output folder for this book
     const outputFolder = path.join(process.cwd(), 'storage', bookID);

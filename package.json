@@ -8,6 +8,7 @@
     "start": "node main.js"
   },
   "dependencies": {
+    "dotenv": "^17.2.3",
     "pdf-lib": "^1.17.1",
     "puppeteer": "24.34.0"
   }
