@@ -1,0 +1,14 @@
+{
+  "name": "ut-scrapper",
+  "version": "1.0.0",
+  "main": "main.js",
+  "type": "module",
+  "license": "MIT",
+  "scripts": {
+    "start": "node main.js"
+  },
+  "dependencies": {
+    "pdf-lib": "^1.17.1",
+    "puppeteer": "24.34.0"
+  }
+}
