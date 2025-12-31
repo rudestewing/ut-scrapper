@@ -19,6 +19,11 @@ const CONFIG = {
     SELECTOR: 30000,
     RENDER_DELAY: 2000,
   },
+  VIEWPORT: {
+    WIDTH: 665, // 176mm converted to pixels (for book-sized content)
+    HEIGHT: 1080,
+    DEVICE_SCALE_FACTOR: 1, // 100% zoom for precision
+  },
   PDF: {
     WIDTH: '176mm',
     HEIGHT: '250mm',
@@ -31,7 +36,7 @@ const CONFIG = {
 
 /**
  * Parse command line arguments
- * @returns {Object} Parsed parameters {id, start, end, name}
+ * @returns {Object} Parsed parameters {id, start, end, name, generatePdf}
  */
 function parseArgs() {
   const args = process.argv.slice(2);
@@ -40,6 +45,7 @@ function parseArgs() {
     start: CONFIG.DEFAULT_START,
     end: CONFIG.DEFAULT_END,
     name: '',
+    generatePdf: false,
   };
 
   args.forEach((arg) => {
@@ -57,14 +63,21 @@ function parseArgs() {
       case '--name':
         params.name = value || '';
         break;
+      case '--generate-pdf':
+        params.generatePdf = true;
+        break;
     }
   });
 
   return params;
 }
 
-const { id: bookID, start, end, name: bookName } = parseArgs();
-console.log(`Book ID: ${bookID}, Start: ${start}, End: ${end}, Name: ${bookName || '(default)'}`);
+const { id: bookID, start, end, name: bookName, generatePdf } = parseArgs();
+console.log(
+  `Book ID: ${bookID}, Start: ${start}, End: ${end}, Name: ${
+    bookName || '(default)'
+  }, Generate PDF: ${generatePdf}`
+);
 
 /**
  * Generate chapter URL
@@ -98,7 +111,7 @@ function createHtmlTemplate(content, styles) {
       margin: 0 !important;
       padding: 0 !important;
       width: 100%;
-      height: auto !important;
+      height: 100% !important;
       min-height: auto !important;
       max-height: none !important;
       overflow: visible !important;
@@ -108,17 +121,23 @@ function createHtmlTemplate(content, styles) {
     /* Override container restrictions */
     #epubContainer {
       width: 100% !important;
-      height: auto !important;
+      height: 100% !important;
       max-width: 100% !important;
       max-height: none !important;
       overflow: visible !important;
       position: relative !important;
       bottom: 0 !important;
     }
+    #spreadL {
+      height: 100% !important;
+    }
+    #fxlChapter {
+      height: 100% !important;
+    }
 
     #epubContent {
       width: 100% !important;
-      height: auto !important;
+      height: 100% !important;
       overflow: visible !important;
       position: relative !important;
     }
@@ -272,12 +291,92 @@ function ensureOutputFolder(bookID) {
 }
 
 /**
+ * Generate PDF from existing HTML files in storage folder
+ * @param {string} bookID - Book identifier
+ * @param {string} bookName - Optional book name
+ */
+async function generatePdfFromStorage(bookID, bookName = '') {
+  try {
+    const storageFolder = path.join(process.cwd(), 'storage', bookID);
+
+    // Check if folder exists
+    if (!fs.existsSync(storageFolder)) {
+      console.error(`Error: Folder not found: ${storageFolder}`);
+      console.log('Please make sure the book ID is correct and chapters have been scraped.');
+      return;
+    }
+
+    // Get all HTML files
+    const files = fs
+      .readdirSync(storageFolder)
+      .filter((file) => file.startsWith('chapter_') && file.endsWith('.html'))
+      .sort((a, b) => {
+        const numA = parseInt(a.match(/chapter_(\d+)\.html/)[1]);
+        const numB = parseInt(b.match(/chapter_(\d+)\.html/)[1]);
+        return numA - numB;
+      });
+
+    if (files.length === 0) {
+      console.error(`Error: No chapter HTML files found in ${storageFolder}`);
+      return;
+    }
+
+    console.log(`\n=== Generating PDF from ${files.length} HTML files ===`);
+    console.log(`Source folder: ${storageFolder}`);
+
+    const browser = await launchBrowser();
+    const pdfFiles = [];
+
+    // Generate PDF for each HTML file
+    for (let i = 0; i < files.length; i++) {
+      const file = files[i];
+      const chapterNumber = parseInt(file.match(/chapter_(\d+)\.html/)[1]);
+      console.log(`\nProcessing ${file} (${i + 1} of ${files.length})...`);
+
+      const htmlPath = path.join(storageFolder, file);
+      const htmlContent = fs.readFileSync(htmlPath, 'utf-8');
+
+      const pdfPath = await generatePdfFromHtml(browser, htmlContent, storageFolder, chapterNumber);
+      pdfFiles.push(pdfPath);
+      console.log(`✓ PDF saved: ${pdfPath}`);
+    }
+
+    await closeBrowser(browser);
+
+    // Merge all PDFs
+    console.log('\n=== Merging all PDFs ===');
+    const finalPdfPath = await mergePdfs(pdfFiles, bookID, bookName);
+
+    console.log(`\n=== PDF generation completed ===`);
+    console.log(`✓ Final PDF saved: ${finalPdfPath}`);
+    console.log(`✓ Total chapters processed: ${files.length}`);
+  } catch (error) {
+    console.error('An error occurred:', error);
+  }
+}
+
+/**
  * Main execution function
  */
 async function main() {
+  // If generate-pdf flag is set, generate PDF from existing HTML files
+  if (generatePdf) {
+    await generatePdfFromStorage(bookID, bookName);
+    return;
+  }
+
+  // Otherwise, proceed with normal scraping
   try {
     const browser = await launchBrowser();
     const page = await browser.newPage();
+
+    // Set viewport untuk scraping dengan zoom 100%
+    await page.setViewport({
+      width: CONFIG.VIEWPORT.WIDTH,
+      height: CONFIG.VIEWPORT.HEIGHT,
+      deviceScaleFactor: CONFIG.VIEWPORT.DEVICE_SCALE_FACTOR,
+    });
+
     page.setDefaultNavigationTimeout(CONFIG.TIMEOUT.NAVIGATION);
 
     const outputFolder = ensureOutputFolder(bookID);
@@ -311,9 +410,33 @@ async function main() {
     console.log(`✓ Individual PDFs location: ${outputFolder}`);
     console.log(`✓ Total chapters processed: ${totalChapters} (from ${start} to ${end - 1})`);
 
-    await browser.close();
+    await closeBrowser(browser);
   } catch (error) {
     console.error('An error occurred:', error);
+  }
+}
+
+async function closeBrowser(browser) {
+  // return false;
+  if (browser) {
+    try {
+      console.log('Closing browser...');
+      await browser.close();
+    } catch (error) {
+      console.error('Error closing browser:', error);
+    }
+  }
+}
+
+async function closePage(page) {
+  // return false;
+  try {
+    if (page) {
+      console.log('Closing page...');
+      await page.close();
+    }
+  } catch (error) {
+    console.error('Error closing page:', error);
   }
 }
 
@@ -370,6 +493,14 @@ async function processChapter(
  */
 async function generatePdfFromHtml(browser, htmlTemplate, outputFolder, chapter) {
   const pdfPage = await browser.newPage();
+
+  // Set zoom to 100% (deviceScaleFactor: 1) for precision
+  await pdfPage.setViewport({
+    width: CONFIG.VIEWPORT.WIDTH,
+    height: CONFIG.VIEWPORT.HEIGHT,
+    deviceScaleFactor: CONFIG.VIEWPORT.DEVICE_SCALE_FACTOR,
+  });
+
   await pdfPage.setContent(htmlTemplate, { waitUntil: 'networkidle0' });
 
   // Wait a bit more to ensure full rendering
@@ -425,7 +556,7 @@ async function generatePdfFromHtml(browser, htmlTemplate, outputFolder, chapter)
 
   await pdfPage.pdf({
     path: tempPdfPath,
-    width: `${contentWidth}px`,
+    width: CONFIG.PDF.WIDTH,
     height: `${contentHeight}px`,
     printBackground: true,
     margin: CONFIG.PDF.MARGIN,
@@ -433,7 +564,7 @@ async function generatePdfFromHtml(browser, htmlTemplate, outputFolder, chapter)
     omitBackground: false,
   });
 
-  await pdfPage.close();
+  await closePage(pdfPage);
   await removeBlankPageFromPDF(tempPdfPath);
   fs.renameSync(tempPdfPath, finalPdfPath);
 
