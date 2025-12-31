@@ -119,24 +119,133 @@ async function main() {
       // Navigate to chapter
       await scrapeChapter(page, bookID, chapter, chapter === start ? 60000 : 30000);
 
-      // Save current page as PDF directly
-      const pdfFilePath = path.join(outputFolder, `chapter_${chapter + 1}.pdf`);
+      // Extract content and styles from the page
+      console.log(`Extracting content and styles for chapter ${chapter + 1}...`);
 
-      console.log(`Saving chapter ${chapter + 1} as PDF...`);
-      await page.pdf({
-        path: pdfFilePath,
-        format: 'A4',
-        printBackground: true,
-        margin: {
-          top: '20px',
-          bottom: '20px',
-          left: '20px',
-          right: '20px',
-        },
+      const { content, styles } = await page.evaluate(() => {
+        // Get the content from #epubContent
+        const epubContent = document.querySelector('#epubContent');
+        const content = epubContent ? epubContent.outerHTML : '';
+
+        // Get all styles from the page
+        const styles = [];
+
+        // Get all style tags
+        const styleTags = document.querySelectorAll('style');
+        styleTags.forEach((tag) => {
+          styles.push(tag.innerHTML);
+        });
+
+        // Get all linked stylesheets
+        const linkTags = document.querySelectorAll('link[rel="stylesheet"]');
+        linkTags.forEach((link) => {
+          try {
+            const sheet = link.sheet;
+            if (sheet && sheet.cssRules) {
+              let css = '';
+              for (let rule of sheet.cssRules) {
+                css += rule.cssText + '\n';
+              }
+              styles.push(css);
+            }
+          } catch (e) {
+            // CORS issues might prevent access to some stylesheets
+            console.log('Could not access stylesheet:', link.href);
+          }
+        });
+
+        return { content, styles: styles.join('\n') };
       });
 
-      pdfFiles.push(pdfFilePath);
+      // Create HTML template with extracted content and styles
+      const htmlTemplate = `
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <style>
+    /* Reset styles */
+    * {
+      box-sizing: border-box;
+    }
+
+    html, body {
+      margin: 0;
+      padding: 0;
+      width: 100%;
+      height: auto !important;
+      overflow: visible !important;
+      position: relative !important;
+    }
+
+    /* Override container restrictions */
+    #epubContainer {
+      width: 100% !important;
+      height: auto !important;
+      max-width: 100% !important;
+      max-height: none !important;
+      overflow: visible !important;
+      position: relative !important;
+    }
+
+    #epubContent {
+      width: 100% !important;
+      height: auto !important;
+      overflow: visible !important;
+      position: relative !important;
+    }
+
+    /* Original styles from page */
+    ${styles}
+  </style>
+</head>
+<body>
+  <div id="epubContainer" class="stylesEnabled">
+    ${content}
+  </div>
+</body>
+</html>
+      `;
+
+      // Save HTML file for debugging
+      const htmlFilePath = path.join(outputFolder, `chapter_${chapter + 1}.html`);
+      fs.writeFileSync(htmlFilePath, htmlTemplate, 'utf-8');
+      console.log(`✓ HTML saved: ${htmlFilePath}`);
+
+      // Create a new page and set the HTML content
+      const pdfPage = await browser.newPage();
+      await pdfPage.setContent(htmlTemplate, { waitUntil: 'networkidle0' });
+
+      // Save as PDF
+      const pdfFilePath = path.join(outputFolder, `chapter_${chapter + 1}.pdf`);
+      console.log(`Saving chapter ${chapter + 1} as PDF...`);
+
+      const tempPdfPath = path.join(outputFolder, `chapter_${chapter + 1}_temp.pdf`);
+
+      await pdfPage.pdf({
+        path: tempPdfPath,
+        width: '176mm', // Ukuran B5 - standar buku pelajaran
+        height: '250mm',
+        printBackground: true,
+        margin: {
+          top: '0px',
+          bottom: '0px',
+          left: '0px',
+          right: '0px',
+        },
+        preferCSSPageSize: false,
+        omitBackground: false,
+      });
+
+      await pdfPage.close();
+
+      await removeBlankPageFromPDF(tempPdfPath);
+
+      // Rename temp file to final file
+      fs.renameSync(tempPdfPath, pdfFilePath);
+
       console.log(`✓ PDF saved: ${pdfFilePath}`);
+      pdfFiles.push(pdfFilePath);
     }
 
     console.log('\n=== All chapters saved as PDF ===');
@@ -167,6 +276,32 @@ async function main() {
   } catch (error) {
     console.error('An error occurred:', error);
   }
+}
+
+async function removeBlankPageFromPDF(pdfPath) {
+  console.log(`Keeping only first page...`);
+  const pdfBytes = fs.readFileSync(pdfPath);
+  const pdfDoc = await PDFDocument.load(pdfBytes);
+  const totalPages = pdfDoc.getPageCount();
+
+  console.log(`  Total pages: ${totalPages}`);
+
+  // Create new PDF with only first page
+  const newPdf = await PDFDocument.create();
+
+  if (totalPages > 0) {
+    const [firstPage] = await newPdf.copyPages(pdfDoc, [0]);
+    newPdf.addPage(firstPage);
+    console.log(`  ✓ Kept page 1 only`);
+  }
+
+  // Save back to original file
+  const newPdfBytes = await newPdf.save();
+  fs.writeFileSync(pdfPath, newPdfBytes);
+
+  console.log(`  Result: 1 page kept, ${totalPages - 1} pages removed`);
+
+  return true;
 }
 
 // Run the scraper
