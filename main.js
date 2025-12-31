@@ -102,7 +102,7 @@ async function main() {
     page.setDefaultNavigationTimeout(60000); // Increased to 60 seconds
 
     // Create output folder for this book
-    const outputFolder = path.join(process.cwd(), bookID);
+    const outputFolder = path.join(process.cwd(), 'storage', bookID);
     if (!fs.existsSync(outputFolder)) {
       fs.mkdirSync(outputFolder, { recursive: true });
       console.log(`Created folder: ${outputFolder}`);
@@ -155,7 +155,7 @@ async function main() {
     }
 
     const mergedPdfBytes = await mergedPdf.save();
-    const finalPdfPath = path.join(process.cwd(), `book_${bookID}.pdf`);
+    const finalPdfPath = path.join(process.cwd(), 'storage', `book_${bookID}.pdf`);
     fs.writeFileSync(finalPdfPath, mergedPdfBytes);
 
     console.log(`\n=== Process completed ===`);
