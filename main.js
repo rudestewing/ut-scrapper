@@ -6,25 +6,53 @@ import dotenv from 'dotenv';
 
 dotenv.config();
 
-// sample url
-// https://univterbuka.kotobee.com/#/book/88480/reader/chapter/0
+// Constants
+const CONFIG = {
+  BASE_URL: 'https://univterbuka.kotobee.com',
+  DEFAULT_BOOK_ID: '88480',
+  DEFAULT_START: 0,
+  DEFAULT_END: 5,
+  TIMEOUT: {
+    NAVIGATION: 60000,
+    URL_MATCH: 30000,
+    URL_MATCH_FIRST: 60000,
+    SELECTOR: 30000,
+    RENDER_DELAY: 2000,
+  },
+  PDF: {
+    WIDTH: '176mm',
+    HEIGHT: '250mm',
+    MARGIN: { top: '0px', bottom: '0px', left: '0px', right: '0px' },
+  },
+  SELECTORS: {
+    EPUB_CONTENT: '#epubContent',
+  },
+};
 
-// Parse command line arguments
+/**
+ * Parse command line arguments
+ * @returns {Object} Parsed parameters {id, start, end}
+ */
 function parseArgs() {
   const args = process.argv.slice(2);
   const params = {
-    id: '88480',
-    start: 0,
-    end: 5,
+    id: CONFIG.DEFAULT_BOOK_ID,
+    start: CONFIG.DEFAULT_START,
+    end: CONFIG.DEFAULT_END,
   };
 
   args.forEach((arg) => {
-    if (arg.startsWith('--id=')) {
-      params.id = arg.split('=')[1];
-    } else if (arg.startsWith('--start=')) {
-      params.start = parseInt(arg.split('=')[1]);
-    } else if (arg.startsWith('--end=')) {
-      params.end = parseInt(arg.split('=')[1]);
+    const [key, value] = arg.split('=');
+    switch (key) {
+      case '--id':
+        params.id = value;
+        break;
+      case '--start':
+        params.start = parseInt(value, 10);
+        break;
+      case '--end':
+        params.end = parseInt(value, 10);
+        break;
     }
   });
 
@@ -34,6 +62,119 @@ function parseArgs() {
 const { id: bookID, start, end } = parseArgs();
 console.log(`Book ID: ${bookID}, Start: ${start}, End: ${end}`);
 
+/**
+ * Generate chapter URL
+ * @param {string} bookID - Book identifier
+ * @param {number} chapterNumber - Chapter index
+ * @returns {string} Full chapter URL
+ */
+function getChapterUrl(bookID, chapterNumber) {
+  return `${CONFIG.BASE_URL}/#/book/${bookID}/reader/chapter/${chapterNumber}`;
+}
+
+/**
+ * Create HTML template with content and styles
+ * @param {string} content - HTML content
+ * @param {string} styles - CSS styles
+ * @returns {string} Complete HTML template
+ */
+function createHtmlTemplate(content, styles) {
+  return `
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <style>
+    /* Reset styles */
+    * {
+      box-sizing: border-box;
+    }
+
+    html, body {
+      margin: 0;
+      padding: 0;
+      width: 100%;
+      height: auto !important;
+      overflow: visible !important;
+      position: relative !important;
+    }
+
+    /* Override container restrictions */
+    #epubContainer {
+      width: 100% !important;
+      height: auto !important;
+      max-width: 100% !important;
+      max-height: none !important;
+      overflow: visible !important;
+      position: relative !important;
+    }
+
+    #epubContent {
+      width: 100% !important;
+      height: auto !important;
+      overflow: visible !important;
+      position: relative !important;
+    }
+
+    /* Original styles from page */
+    ${styles}
+  </style>
+</head>
+<body>
+  <div id="epubContainer" class="stylesEnabled">
+    ${content}
+  </div>
+</body>
+</html>
+  `;
+}
+
+/**
+ * Extract content and styles from the page
+ * @param {Page} page - Puppeteer page instance
+ * @returns {Promise<{content: string, styles: string}>}
+ */
+async function extractPageContent(page) {
+  return await page.evaluate(() => {
+    const epubContent = document.querySelector('#epubContent');
+    const content = epubContent ? epubContent.outerHTML : '';
+
+    const styles = [];
+
+    // Get all style tags
+    const styleTags = document.querySelectorAll('style');
+    styleTags.forEach((tag) => {
+      styles.push(tag.innerHTML);
+    });
+
+    // Get all linked stylesheets
+    const linkTags = document.querySelectorAll('link[rel="stylesheet"]');
+    linkTags.forEach((link) => {
+      try {
+        const sheet = link.sheet;
+        if (sheet && sheet.cssRules) {
+          let css = '';
+          for (let rule of sheet.cssRules) {
+            css += rule.cssText + '\n';
+          }
+          styles.push(css);
+        }
+      } catch (e) {
+        console.log('Could not access stylesheet:', link.href);
+      }
+    });
+
+    return { content, styles: styles.join('\n') };
+  });
+}
+
+/**
+ * Navigate to and wait for chapter to load
+ * @param {Page} page - Puppeteer page instance
+ * @param {string} bookID - Book identifier
+ * @param {number} chapterNumber - Chapter index
+ * @param {number} timeout - Custom timeout for URL match (0 uses default)
+ */
 async function scrapeChapter(page, bookID, chapterNumber, timeout = 0) {
   const targetUrl = `https://univterbuka.kotobee.com/#/book/${bookID}/reader/chapter/${chapterNumber}`;
   const url = targetUrl;
@@ -91,186 +232,72 @@ async function scrapeChapter(page, bookID, chapterNumber, timeout = 0) {
   console.log(`Chapter ${chapterNumber} loaded successfully`);
 }
 
+/**
+ * Launch browser with configured options
+ * @returns {Promise<Browser>}
+ */
+async function launchBrowser() {
+  const userDataDir = process.env.USER_DATA_DIR || '';
+
+  return await puppeteer.launch({
+    headless: process.env.HEADLESS === 'true',
+    args: [
+      '--no-sandbox',
+      '--disable-setuid-sandbox',
+      `--user-data-dir=${userDataDir}`,
+      '--profile-directory=Default',
+    ],
+  });
+}
+
+/**
+ * Ensure output directory exists
+ * @param {string} bookID - Book identifier
+ * @returns {string} Output folder path
+ */
+function ensureOutputFolder(bookID) {
+  const outputFolder = path.join(process.cwd(), 'storage', bookID);
+  if (!fs.existsSync(outputFolder)) {
+    fs.mkdirSync(outputFolder, { recursive: true });
+    console.log(`Created folder: ${outputFolder}`);
+  }
+  return outputFolder;
+}
+
+/**
+ * Main execution function
+ */
 async function main() {
   try {
-    const browser = await puppeteer.launch({
-      headless: process.env.HEADLESS === 'true',
-      args: [
-        '--no-sandbox',
-        '--disable-setuid-sandbox',
-        `--user-data-dir=${process.env.USER_DATA_DIR}`,
-        '--profile-directory=Default',
-      ],
-    });
-
+    const browser = await launchBrowser();
     const page = await browser.newPage();
-    page.setDefaultNavigationTimeout(60000);
+    page.setDefaultNavigationTimeout(CONFIG.TIMEOUT.NAVIGATION);
 
-    // Create output folder for this book
-    const outputFolder = path.join(process.cwd(), 'storage', bookID);
-    if (!fs.existsSync(outputFolder)) {
-      fs.mkdirSync(outputFolder, { recursive: true });
-      console.log(`Created folder: ${outputFolder}`);
-    }
+    const outputFolder = ensureOutputFolder(bookID);
 
-    // Step 1: Loop through all chapters and save as PDF directly
     console.log('\n=== Step 1: Scraping chapters and saving as PDF ===');
     const totalChapters = end - start;
     const pdfFiles = [];
 
     for (let chapter = start; chapter < end; chapter++) {
-      console.log(`\nProcessing Chapter ${chapter + 1}/${totalChapters} (index: ${chapter})...`);
-
-      // Navigate to chapter
-      await scrapeChapter(page, bookID, chapter, chapter === start ? 60000 : 30000);
-
-      // Extract content and styles from the page
-      console.log(`Extracting content and styles for chapter ${chapter + 1}...`);
-
-      const { content, styles } = await page.evaluate(() => {
-        // Get the content from #epubContent
-        const epubContent = document.querySelector('#epubContent');
-        const content = epubContent ? epubContent.outerHTML : '';
-
-        // Get all styles from the page
-        const styles = [];
-
-        // Get all style tags
-        const styleTags = document.querySelectorAll('style');
-        styleTags.forEach((tag) => {
-          styles.push(tag.innerHTML);
-        });
-
-        // Get all linked stylesheets
-        const linkTags = document.querySelectorAll('link[rel="stylesheet"]');
-        linkTags.forEach((link) => {
-          try {
-            const sheet = link.sheet;
-            if (sheet && sheet.cssRules) {
-              let css = '';
-              for (let rule of sheet.cssRules) {
-                css += rule.cssText + '\n';
-              }
-              styles.push(css);
-            }
-          } catch (e) {
-            // CORS issues might prevent access to some stylesheets
-            console.log('Could not access stylesheet:', link.href);
-          }
-        });
-
-        return { content, styles: styles.join('\n') };
-      });
-
-      // Create HTML template with extracted content and styles
-      const htmlTemplate = `
-<!DOCTYPE html>
-<html>
-<head>
-  <meta charset="UTF-8">
-  <style>
-    /* Reset styles */
-    * {
-      box-sizing: border-box;
-    }
-
-    html, body {
-      margin: 0;
-      padding: 0;
-      width: 100%;
-      height: auto !important;
-      overflow: visible !important;
-      position: relative !important;
-    }
-
-    /* Override container restrictions */
-    #epubContainer {
-      width: 100% !important;
-      height: auto !important;
-      max-width: 100% !important;
-      max-height: none !important;
-      overflow: visible !important;
-      position: relative !important;
-    }
-
-    #epubContent {
-      width: 100% !important;
-      height: auto !important;
-      overflow: visible !important;
-      position: relative !important;
-    }
-
-    /* Original styles from page */
-    ${styles}
-  </style>
-</head>
-<body>
-  <div id="epubContainer" class="stylesEnabled">
-    ${content}
-  </div>
-</body>
-</html>
-      `;
-
-      // Save HTML file for debugging
-      const htmlFilePath = path.join(outputFolder, `chapter_${chapter + 1}.html`);
-      fs.writeFileSync(htmlFilePath, htmlTemplate, 'utf-8');
-      console.log(`✓ HTML saved: ${htmlFilePath}`);
-
-      // Create a new page and set the HTML content
-      const pdfPage = await browser.newPage();
-      await pdfPage.setContent(htmlTemplate, { waitUntil: 'networkidle0' });
-
-      // Save as PDF
-      const pdfFilePath = path.join(outputFolder, `chapter_${chapter + 1}.pdf`);
-      console.log(`Saving chapter ${chapter + 1} as PDF...`);
-
-      const tempPdfPath = path.join(outputFolder, `chapter_${chapter + 1}_temp.pdf`);
-
-      await pdfPage.pdf({
-        path: tempPdfPath,
-        width: '176mm', // Ukuran B5 - standar buku pelajaran
-        height: '250mm',
-        printBackground: true,
-        margin: {
-          top: '0px',
-          bottom: '0px',
-          left: '0px',
-          right: '0px',
-        },
-        preferCSSPageSize: false,
-        omitBackground: false,
-      });
-
-      await pdfPage.close();
-
-      await removeBlankPageFromPDF(tempPdfPath);
-
-      // Rename temp file to final file
-      fs.renameSync(tempPdfPath, pdfFilePath);
-
-      console.log(`✓ PDF saved: ${pdfFilePath}`);
-      pdfFiles.push(pdfFilePath);
+      const isFirstChapter = chapter === start;
+      const pdfPath = await processChapter(
+        browser,
+        page,
+        bookID,
+        chapter,
+        outputFolder,
+        totalChapters,
+        isFirstChapter
+      );
+      pdfFiles.push(pdfPath);
     }
 
     console.log('\n=== All chapters saved as PDF ===');
 
     // Step 2: Merge all PDFs into one
     console.log('\n=== Step 2: Merging all PDFs ===');
-
-    const mergedPdf = await PDFDocument.create();
-
-    for (const pdfFile of pdfFiles) {
-      const pdfBytes = fs.readFileSync(pdfFile);
-      const pdf = await PDFDocument.load(pdfBytes);
-      const copiedPages = await mergedPdf.copyPages(pdf, pdf.getPageIndices());
-      copiedPages.forEach((page) => mergedPdf.addPage(page));
-      console.log(`✓ Merged: ${path.basename(pdfFile)}`);
-    }
-
-    const mergedPdfBytes = await mergedPdf.save();
-    const finalPdfPath = path.join(process.cwd(), 'storage', `book_${bookID}.pdf`);
-    fs.writeFileSync(finalPdfPath, mergedPdfBytes);
+    const finalPdfPath = await mergePdfs(pdfFiles, bookID);
 
     console.log(`\n=== Process completed ===`);
     console.log(`✓ Final PDF saved: ${finalPdfPath}`);
@@ -283,6 +310,111 @@ async function main() {
   }
 }
 
+/**
+ * Process a single chapter: scrape, extract, save HTML, generate PDF
+ * @param {Browser} browser - Puppeteer browser instance
+ * @param {Page} page - Puppeteer page instance
+ * @param {string} bookID - Book identifier
+ * @param {number} chapter - Chapter index
+ * @param {string} outputFolder - Output directory path
+ * @param {number} totalChapters - Total number of chapters
+ * @param {boolean} isFirstChapter - Whether this is the first chapter
+ * @returns {Promise<string>} Path to generated PDF
+ */
+async function processChapter(
+  browser,
+  page,
+  bookID,
+  chapter,
+  outputFolder,
+  totalChapters,
+  isFirstChapter
+) {
+  console.log(`\nProcessing Chapter ${chapter + 1}/${totalChapters} (index: ${chapter})...`);
+
+  // Navigate to chapter with longer timeout for first chapter
+  const timeout = isFirstChapter ? CONFIG.TIMEOUT.URL_MATCH_FIRST : CONFIG.TIMEOUT.URL_MATCH;
+  await scrapeChapter(page, bookID, chapter, timeout);
+
+  // Extract content and styles
+  console.log(`Extracting content and styles for chapter ${chapter + 1}...`);
+  const { content, styles } = await extractPageContent(page);
+
+  // Create and save HTML template
+  const htmlTemplate = createHtmlTemplate(content, styles);
+  const htmlFilePath = path.join(outputFolder, `chapter_${chapter + 1}.html`);
+  fs.writeFileSync(htmlFilePath, htmlTemplate, 'utf-8');
+  console.log(`✓ HTML saved: ${htmlFilePath}`);
+
+  // Generate PDF
+  const pdfFilePath = await generatePdfFromHtml(browser, htmlTemplate, outputFolder, chapter);
+  console.log(`✓ PDF saved: ${pdfFilePath}`);
+
+  return pdfFilePath;
+}
+
+/**
+ * Generate PDF from HTML content
+ * @param {Browser} browser - Puppeteer browser instance
+ * @param {string} htmlTemplate - HTML content
+ * @param {string} outputFolder - Output directory
+ * @param {number} chapter - Chapter index
+ * @returns {Promise<string>} Path to generated PDF
+ */
+async function generatePdfFromHtml(browser, htmlTemplate, outputFolder, chapter) {
+  const pdfPage = await browser.newPage();
+  await pdfPage.setContent(htmlTemplate, { waitUntil: 'networkidle0' });
+
+  console.log(`Saving chapter ${chapter + 1} as PDF...`);
+  const tempPdfPath = path.join(outputFolder, `chapter_${chapter + 1}_temp.pdf`);
+  const finalPdfPath = path.join(outputFolder, `chapter_${chapter + 1}.pdf`);
+
+  await pdfPage.pdf({
+    path: tempPdfPath,
+    width: CONFIG.PDF.WIDTH,
+    height: CONFIG.PDF.HEIGHT,
+    printBackground: true,
+    margin: CONFIG.PDF.MARGIN,
+    preferCSSPageSize: false,
+    omitBackground: false,
+  });
+
+  await pdfPage.close();
+  await removeBlankPageFromPDF(tempPdfPath);
+  fs.renameSync(tempPdfPath, finalPdfPath);
+
+  return finalPdfPath;
+}
+
+/**
+ * Merge multiple PDF files into one
+ * @param {string[]} pdfFiles - Array of PDF file paths
+ * @param {string} bookID - Book identifier
+ * @returns {Promise<string>} Path to merged PDF
+ */
+async function mergePdfs(pdfFiles, bookID) {
+  const mergedPdf = await PDFDocument.create();
+
+  for (const pdfFile of pdfFiles) {
+    const pdfBytes = fs.readFileSync(pdfFile);
+    const pdf = await PDFDocument.load(pdfBytes);
+    const copiedPages = await mergedPdf.copyPages(pdf, pdf.getPageIndices());
+    copiedPages.forEach((page) => mergedPdf.addPage(page));
+    console.log(`✓ Merged: ${path.basename(pdfFile)}`);
+  }
+
+  const mergedPdfBytes = await mergedPdf.save();
+  const finalPdfPath = path.join(process.cwd(), 'storage', `book_${bookID}.pdf`);
+  fs.writeFileSync(finalPdfPath, mergedPdfBytes);
+
+  return finalPdfPath;
+}
+
+/**
+ * Remove blank pages from PDF, keeping only the first page
+ * @param {string} pdfPath - Path to PDF file
+ * @returns {Promise<boolean>}
+ */
 async function removeBlankPageFromPDF(pdfPath) {
   console.log(`Keeping only first page...`);
   const pdfBytes = fs.readFileSync(pdfPath);
