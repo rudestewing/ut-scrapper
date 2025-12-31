@@ -31,7 +31,7 @@ const CONFIG = {
 
 /**
  * Parse command line arguments
- * @returns {Object} Parsed parameters {id, start, end}
+ * @returns {Object} Parsed parameters {id, start, end, name}
  */
 function parseArgs() {
   const args = process.argv.slice(2);
@@ -39,6 +39,7 @@ function parseArgs() {
     id: CONFIG.DEFAULT_BOOK_ID,
     start: CONFIG.DEFAULT_START,
     end: CONFIG.DEFAULT_END,
+    name: '',
   };
 
   args.forEach((arg) => {
@@ -53,14 +54,17 @@ function parseArgs() {
       case '--end':
         params.end = parseInt(value, 10);
         break;
+      case '--name':
+        params.name = value || '';
+        break;
     }
   });
 
   return params;
 }
 
-const { id: bookID, start, end } = parseArgs();
-console.log(`Book ID: ${bookID}, Start: ${start}, End: ${end}`);
+const { id: bookID, start, end, name: bookName } = parseArgs();
+console.log(`Book ID: ${bookID}, Start: ${start}, End: ${end}, Name: ${bookName || '(default)'}`);
 
 /**
  * Generate chapter URL
@@ -297,7 +301,7 @@ async function main() {
 
     // Step 2: Merge all PDFs into one
     console.log('\n=== Step 2: Merging all PDFs ===');
-    const finalPdfPath = await mergePdfs(pdfFiles, bookID);
+    const finalPdfPath = await mergePdfs(pdfFiles, bookID, bookName);
 
     console.log(`\n=== Process completed ===`);
     console.log(`✓ Final PDF saved: ${finalPdfPath}`);
@@ -390,9 +394,10 @@ async function generatePdfFromHtml(browser, htmlTemplate, outputFolder, chapter)
  * Merge multiple PDF files into one
  * @param {string[]} pdfFiles - Array of PDF file paths
  * @param {string} bookID - Book identifier
+ * @param {string} bookName - Optional book name
  * @returns {Promise<string>} Path to merged PDF
  */
-async function mergePdfs(pdfFiles, bookID) {
+async function mergePdfs(pdfFiles, bookID, bookName = '') {
   const mergedPdf = await PDFDocument.create();
 
   for (const pdfFile of pdfFiles) {
@@ -404,7 +409,8 @@ async function mergePdfs(pdfFiles, bookID) {
   }
 
   const mergedPdfBytes = await mergedPdf.save();
-  const finalPdfPath = path.join(process.cwd(), 'storage', `book_${bookID}.pdf`);
+  const filename = bookName ? `${bookID}_${bookName}.pdf` : `book_${bookID}.pdf`;
+  const finalPdfPath = path.join(process.cwd(), 'storage', filename);
   fs.writeFileSync(finalPdfPath, mergedPdfBytes);
 
   return finalPdfPath;
