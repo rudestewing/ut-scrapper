@@ -95,10 +95,12 @@ function createHtmlTemplate(content, styles) {
     }
 
     html, body {
-      margin: 0;
-      padding: 0;
+      margin: 0 !important;
+      padding: 0 !important;
       width: 100%;
       height: auto !important;
+      min-height: auto !important;
+      max-height: none !important;
       overflow: visible !important;
       position: relative !important;
     }
@@ -111,6 +113,7 @@ function createHtmlTemplate(content, styles) {
       max-height: none !important;
       overflow: visible !important;
       position: relative !important;
+      bottom: 0 !important;
     }
 
     #epubContent {
@@ -369,14 +372,61 @@ async function generatePdfFromHtml(browser, htmlTemplate, outputFolder, chapter)
   const pdfPage = await browser.newPage();
   await pdfPage.setContent(htmlTemplate, { waitUntil: 'networkidle0' });
 
+  // Wait a bit more to ensure full rendering
+  await new Promise((resolve) => setTimeout(resolve, 500));
+
+  // Get the actual width and height of the content
+  const { contentWidth, contentHeight } = await pdfPage.evaluate(() => {
+    // Get the main content container
+    const epubContent = document.querySelector('#epubContent');
+    const epubContainer = document.querySelector('#epubContainer');
+
+    if (epubContent) {
+      const rect = epubContent.getBoundingClientRect();
+      const computedWidth = Math.ceil(rect.width);
+      const computedHeight = Math.ceil(rect.bottom);
+      console.log('epubContent bounding rect - width:', computedWidth, 'height:', computedHeight);
+      return { contentWidth: computedWidth, contentHeight: computedHeight };
+    }
+
+    if (epubContainer) {
+      const rect = epubContainer.getBoundingClientRect();
+      const computedWidth = Math.ceil(rect.width);
+      const computedHeight = Math.ceil(rect.bottom);
+      console.log('epubContainer bounding rect - width:', computedWidth, 'height:', computedHeight);
+      return { contentWidth: computedWidth, contentHeight: computedHeight };
+    }
+
+    // Fallback to document dimensions
+    const body = document.body;
+    const html = document.documentElement;
+    const height = Math.max(
+      body.scrollHeight,
+      body.offsetHeight,
+      html.clientHeight,
+      html.scrollHeight,
+      html.offsetHeight
+    );
+    const width = Math.max(
+      body.scrollWidth,
+      body.offsetWidth,
+      html.clientWidth,
+      html.scrollWidth,
+      html.offsetWidth
+    );
+    console.log('Fallback document - width:', width, 'height:', height);
+    return { contentWidth: width, contentHeight: height };
+  });
+
+  console.log(`Content dimensions: ${contentWidth}px x ${contentHeight}px`);
   console.log(`Saving chapter ${chapter} as PDF...`);
   const tempPdfPath = path.join(outputFolder, `chapter_${chapter}_temp.pdf`);
   const finalPdfPath = path.join(outputFolder, `chapter_${chapter}.pdf`);
 
   await pdfPage.pdf({
     path: tempPdfPath,
-    width: CONFIG.PDF.WIDTH,
-    height: CONFIG.PDF.HEIGHT,
+    width: `${contentWidth}px`,
+    height: `${contentHeight}px`,
     printBackground: true,
     margin: CONFIG.PDF.MARGIN,
     preferCSSPageSize: false,
@@ -417,32 +467,59 @@ async function mergePdfs(pdfFiles, bookID, bookName = '') {
 }
 
 /**
- * Remove blank pages from PDF, keeping only the first page
+ * Remove blank pages from PDF
  * @param {string} pdfPath - Path to PDF file
  * @returns {Promise<boolean>}
  */
 async function removeBlankPageFromPDF(pdfPath) {
-  console.log(`Keeping only first page...`);
+  console.log(`Removing blank pages...`);
   const pdfBytes = fs.readFileSync(pdfPath);
   const pdfDoc = await PDFDocument.load(pdfBytes);
   const totalPages = pdfDoc.getPageCount();
 
   console.log(`  Total pages: ${totalPages}`);
 
-  // Create new PDF with only first page
+  // Identify non-blank pages
+  const nonBlankPageIndices = [];
+
+  for (let i = 0; i < totalPages; i++) {
+    const page = pdfDoc.getPage(i);
+    const contentStream = page.node.Contents();
+
+    // Check if page has content
+    let hasContent = false;
+    if (contentStream) {
+      // Get content size as indicator of whether page has meaningful content
+      const content = contentStream.toString();
+      // A page with actual content will have more than just basic PDF operators
+      // Blank pages typically have very minimal content (< 100 chars)
+      hasContent = content.length > 100;
+    }
+
+    if (hasContent) {
+      nonBlankPageIndices.push(i);
+      console.log(`  ✓ Page ${i + 1}: Has content (keeping)`);
+    } else {
+      console.log(`  ✗ Page ${i + 1}: Blank (removing)`);
+    }
+  }
+
+  // Create new PDF with only non-blank pages
   const newPdf = await PDFDocument.create();
 
-  if (totalPages > 0) {
-    const [firstPage] = await newPdf.copyPages(pdfDoc, [0]);
-    newPdf.addPage(firstPage);
-    console.log(`  ✓ Kept page 1 only`);
+  if (nonBlankPageIndices.length > 0) {
+    const copiedPages = await newPdf.copyPages(pdfDoc, nonBlankPageIndices);
+    copiedPages.forEach((page) => newPdf.addPage(page));
   }
 
   // Save back to original file
   const newPdfBytes = await newPdf.save();
   fs.writeFileSync(pdfPath, newPdfBytes);
 
-  console.log(`  Result: 1 page kept, ${totalPages - 1} pages removed`);
+  const removedPages = totalPages - nonBlankPageIndices.length;
+  console.log(
+    `  Result: ${nonBlankPageIndices.length} pages kept, ${removedPages} blank pages removed`
+  );
 
   return true;
 }
