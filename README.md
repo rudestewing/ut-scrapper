@@ -54,11 +54,25 @@ USER_DATA_DIR=C:/Users/YourUsername/AppData/Local/Google/Chrome/User Data
 
 ## ⚠️ Important! Before Running the Script
 
-1. **Login first**: Make sure you are already logged in and have an active session on the [Bahan Ajar Digital Universitas Terbuka](https://univterbuka.kotobee.com) website
+**CRITICAL REQUIREMENT - MUST LOGIN FIRST:**
 
-2. **Close Chrome browser**: Close all Chrome windows/tabs that are accessing the digital learning materials before running this script. The script requires exclusive access to the Chrome user data directory.
+1. **Login to website**: You MUST be logged in to [Bahan Ajar Digital Universitas Terbuka](https://univterbuka.kotobee.com) using the Chrome browser that matches the `USER_DATA_DIR` path in your `.env` file
 
-3. **Verify access**: Make sure your account has access to the book you want to scrape.
+   - Open Chrome browser normally
+   - Go to https://univterbuka.kotobee.com
+   - Login with your UT credentials
+   - Make sure you can access the books
+   - **Keep the session active** (don't logout)
+
+2. **Close Chrome browser**: After logging in, close ALL Chrome windows/tabs before running this script. The script needs exclusive access to the Chrome user data directory.
+
+3. **Verify Chrome profile path**: Make sure `USER_DATA_DIR` in `.env` points to the correct Chrome profile where you logged in. The default path is usually:
+
+   - Windows: `C:/Users/YourUsername/AppData/Local/Google/Chrome/User Data`
+   - Mac: `/Users/YourUsername/Library/Application Support/Google/Chrome`
+   - Linux: `/home/YourUsername/.config/google-chrome`
+
+4. **Verify book access**: Make sure your account has access to the book you want to scrape.
 
 ## 🚀 Usage
 
@@ -159,10 +173,27 @@ PDF is generated with the following configuration:
 - Don't use quotes around the path
 - Example: `C:/Users/Username/AppData/Local/Google/Chrome/User Data`
 
-### Browser doesn't open the correct page
+### Browser doesn't open the correct page / Access denied
 
-- Manually login to the Univterbuka site in Chrome
-- Make sure `USER_DATA_DIR` points to the Chrome profile that's already logged in
+**This usually means you're NOT logged in properly!**
+
+1. **Login manually first**: Open Chrome (normal window), go to https://univterbuka.kotobee.com, and login with your UT account
+2. **Verify you're logged in**: Make sure you can see and open books in your Chrome browser
+3. **Check profile path**: Ensure `USER_DATA_DIR` in `.env` matches the Chrome profile where you logged in
+4. **Close Chrome**: Close ALL Chrome windows, then run the script again
+5. **Test with HEADLESS=false**: Set `HEADLESS=false` in `.env` to see what the browser is doing
+
+### Script shows login page or "Access Denied"
+
+- You're not logged in to the website
+- Follow the steps above in "Browser doesn't open the correct page"
+- The script uses your Chrome session cookies, so you MUST login in Chrome first
+
+### "User data directory is already in use"
+
+- Close all Chrome browser windows completely
+- Check Task Manager (Ctrl+Shift+Esc) and end any `chrome.exe` processes
+- Run the script again
 
 ## 📄 License
 
